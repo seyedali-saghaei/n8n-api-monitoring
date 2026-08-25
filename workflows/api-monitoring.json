@@ -1,0 +1,1213 @@
+{
+  "name": "API Monitoring - MVP",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -336
+      ],
+      "id": "76d7c6d5-768f-416e-bbb9-04c288f31ae5",
+      "name": "Start Manual Test"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "dc5b7e34-affd-45e4-ba5e-6ee36f0f5f97",
+              "name": "service_name",
+              "value": "JSONPlaceholder API",
+              "type": "string"
+            },
+            {
+              "id": "09737007-8975-4869-a037-840571bd5996",
+              "name": "url",
+              "value": "https://jsonplaceholder.typicode.com/posts/1",
+              "type": "string"
+            },
+            {
+              "id": "be03b195-36ab-48d9-ace8-d72b68ac0bff",
+              "name": "timeout_ms",
+              "value": 5000,
+              "type": "number"
+            },
+            {
+              "id": "d7dfcc63-f931-4814-a77d-d815f044f3f0",
+              "name": "degraded_threshold_ms",
+              "value": 1000,
+              "type": "number"
+            },
+            {
+              "id": "541cc115-2455-4bbc-b9d3-4a8ad1aa86b7",
+              "name": "expected_field",
+              "value": "id",
+              "type": "string"
+            },
+            {
+              "id": "0c2820fb-d50a-440c-8255-ab59eb7603d3",
+              "name": "expected_value",
+              "value": 1,
+              "type": "number"
+            },
+            {
+              "id": "49b3c15f-4e63-4e31-b3d3-0b3687d38600",
+              "name": "max_attempts",
+              "value": 3,
+              "type": "number"
+            },
+            {
+              "id": "a552cac6-6f9a-413c-bf87-01f12ab6585a",
+              "name": "retry_delay_ms",
+              "value": 2000,
+              "type": "number"
+            },
+            {
+              "id": "92793e9e-2ae3-4cc1-942b-a48bcdc536ec",
+              "name": "attempt",
+              "value": 1,
+              "type": "number"
+            },
+            {
+              "id": "734eeaa6-2ee2-447f-ac22-2258b6d0af59",
+              "name": "alert_webhook_url",
+              "value": "={{ $env.ALERT_WEBHOOK_URL }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        224,
+        -240
+      ],
+      "id": "cec311d8-aa09-4a1e-9c43-48d05e8d71c5",
+      "name": "Load Monitor Configuration"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": "={{ $json.timeout_ms }}"
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        672,
+        -224
+      ],
+      "id": "91ee4a1d-a0d0-4938-877a-0c765c6eba2d",
+      "name": "Check API Health",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "c20d07db-4866-4498-9226-0aa5d13294fb",
+              "name": "checked_at",
+              "value": "={{ $now.toUTC().toISO() }}",
+              "type": "string"
+            },
+            {
+              "id": "08c8d1e1-c5f2-4107-87ae-538d2786be8d",
+              "name": "request_started_at_ms",
+              "value": "={{ Date.now() }}",
+              "type": "number"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        448,
+        -240
+      ],
+      "id": "4de19ac8-c3b1-4df2-93f1-8fb55df44d66",
+      "name": "Record Check Start"
+    },
+    {
+      "parameters": {
+        "jsCode": "const checkData = $input.first()?.json ?? {};\n\nconst startedAt = Number(checkData.request_started_at_ms);\nconst responseTimeMs = Number.isFinite(startedAt)\n  ? Math.max(0, Date.now() - startedAt)\n  : null;\n\nconst rawHttpStatus = checkData.statusCode;\nconst httpStatus = Number.isFinite(Number(rawHttpStatus))\n  ? Number(rawHttpStatus)\n  : null;\n\nconst responseBody = checkData.body ?? {};\nconst expectedField = checkData.expected_field;\nconst expectedValue = checkData.expected_value;\n\nconst hasExpectedField =\n  responseBody !== null &&\n  typeof responseBody === \"object\" &&\n  Object.prototype.hasOwnProperty.call(responseBody, expectedField);\n\nconst hasExpectedContent =\n  hasExpectedField &&\n  responseBody[expectedField] === expectedValue;\n\nconst rawErrorMessage =\n  checkData.error?.message ??\n  checkData.error?.description ??\n  checkData.message ??\n  null;\n\nlet status = \"UNKNOWN\";\nlet errorType = null;\nlet errorMessage = null;\n\nif (rawErrorMessage && httpStatus === null) {\n  status = \"DOWN\";\n\n  const isTimeout = /timeout|timed out|ETIMEDOUT/i.test(\n    String(rawErrorMessage)\n  );\n\n  errorType = isTimeout ? \"TIMEOUT\" : \"NETWORK_ERROR\";\n  errorMessage = String(rawErrorMessage);\n} else if (httpStatus === null) {\n  status = \"UNKNOWN\";\n  errorType = \"INVALID_RESPONSE\";\n  errorMessage = \"HTTP status code is missing\";\n} else if (httpStatus < 200 || httpStatus >= 300) {\n  status = \"DOWN\";\n  errorType = \"HTTP_STATUS\";\n  errorMessage = `API returned HTTP ${httpStatus}`;\n} else if (!hasExpectedContent) {\n  status = \"DOWN\";\n  errorType = \"INVALID_RESPONSE\";\n  errorMessage = `Expected ${expectedField} to equal ${expectedValue}`;\n} else if (\n  responseTimeMs !== null &&\n  responseTimeMs > Number(checkData.degraded_threshold_ms)\n) {\n  status = \"DEGRADED\";\n  errorType = \"SLOW_RESPONSE\";\n  errorMessage =\n    `Response time exceeded ${checkData.degraded_threshold_ms} ms`;\n} else {\n  status = \"UP\";\n}\n\nreturn [\n  {\n    json: {\n      service_name: checkData.service_name,\n      url: checkData.url,\n      checked_at: checkData.checked_at,\n      status,\n      http_status: httpStatus,\n      response_time_ms: responseTimeMs,\n      attempt: Number(checkData.attempt ?? 1),\n      error_type: errorType,\n      error_message: errorMessage,\n\n      max_attempts: Number(checkData.max_attempts ?? 3),\n      retry_delay_ms: Number(checkData.retry_delay_ms ?? 2000),\n      timeout_ms: Number(checkData.timeout_ms ?? 5000),\n      degraded_threshold_ms: Number(\n        checkData.degraded_threshold_ms ?? 1000\n      ),\n      expected_field: checkData.expected_field,\n      expected_value: checkData.expected_value,\n      alert_webhook_url: checkData.alert_webhook_url\n    },\n  },\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        -320
+      ],
+      "id": "c71378a4-878b-44b8-8b92-2612c85639c6",
+      "name": "Evaluate API Status"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        896,
+        -320
+      ],
+      "id": "342161af-627b-4287-bcb2-18c505bee57b",
+      "name": "Merge Check Context"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "2249d892-1773-4da3-9f5e-7764948084fc",
+              "leftValue": "={{ [\"DOWN\", \"UNKNOWN\"].includes($json.status) && $json.attempt < $json.max_attempts }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1344,
+        -320
+      ],
+      "id": "9b314239-3f62-46db-a97e-ac8272cff27e",
+      "name": "Should Retry Check"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "84a070dd-7128-4eb6-99a9-359af9dc48d8",
+              "name": "attempt",
+              "value": "={{ Number($json.attempt) + 1 }}",
+              "type": "number"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        1792,
+        -240
+      ],
+      "id": "c5997a22-68d6-4164-bb36-dcf55bfe60b3",
+      "name": "Prepare Next Attempt"
+    },
+    {
+      "parameters": {
+        "jsCode": "const currentResult = $input.first()?.json;\n\nif (!currentResult) {\n  throw new Error(\"Current API check result is missing\");\n}\n\nconst stateStore = $getWorkflowStaticData(\"global\");\n\nconst previousStatus =\n  typeof stateStore.last_status === \"string\"\n    ? stateStore.last_status\n    : \"UNKNOWN\";\n\nconst previousCheckedAt =\n  typeof stateStore.last_checked_at === \"string\"\n    ? stateStore.last_checked_at\n    : null;\n\nreturn [\n  {\n    json: {\n      ...currentResult,\n      previous_status: previousStatus,\n      previous_checked_at: previousCheckedAt,\n    },\n  },\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        -224
+      ],
+      "id": "84a17359-87da-471f-b5db-ded7928be261",
+      "name": "Load Previous State"
+    },
+    {
+      "parameters": {
+        "jsCode": "const result = $input.first()?.json;\n\nif (!result) {\n  throw new Error(\"API check result is missing\");\n}\n\nconst currentStatus = result.status;\nconst previousStatus = result.previous_status;\n\nconst allowedStatuses = [\n  \"UP\",\n  \"DEGRADED\",\n  \"DOWN\",\n  \"UNKNOWN\",\n];\n\nif (!allowedStatuses.includes(currentStatus)) {\n  throw new Error(`Unsupported current status: ${currentStatus}`);\n}\n\nif (!allowedStatuses.includes(previousStatus)) {\n  throw new Error(`Unsupported previous status: ${previousStatus}`);\n}\n\nconst statusChanged = currentStatus !== previousStatus;\n\nlet alertType = \"NONE\";\nlet shouldAlert = false;\n\nif (\n  currentStatus === \"DOWN\" &&\n  previousStatus !== \"DOWN\"\n) {\n  alertType = \"INCIDENT\";\n  shouldAlert = true;\n} else if (\n  currentStatus === \"DEGRADED\" &&\n  [\"UP\", \"UNKNOWN\"].includes(previousStatus)\n) {\n  alertType = \"PERFORMANCE_WARNING\";\n  shouldAlert = true;\n} else if (\n  currentStatus === \"UP\" &&\n  [\"DOWN\", \"DEGRADED\"].includes(previousStatus)\n) {\n  alertType = \"RECOVERY\";\n  shouldAlert = true;\n}\n\nreturn [\n  {\n    json: {\n      ...result,\n      status_changed: statusChanged,\n      should_alert: shouldAlert,\n      alert_type: alertType,\n    },\n  },\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1792,
+        -48
+      ],
+      "id": "704edc02-6371-4ad5-a96e-5bd789843e6d",
+      "name": "Detect Status Change"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "727ee21c-49c3-4f87-96a7-3be8aa0afb4b",
+              "leftValue": "={{ $json.should_alert }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2016,
+        -48
+      ],
+      "id": "ff9a98f1-b73d-45e5-ad4e-9a26a879136c",
+      "name": "Should Send Alert"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.alert_type }}",
+                    "rightValue": "INCIDENT",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "b15fe3e7-2ed1-4f56-9488-bfc155effece"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "INCIDENT"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "a12574b1-ac43-45de-8b95-53e64cbe3550",
+                    "leftValue": "={{ $json.alert_type }}",
+                    "rightValue": "PERFORMANCE_WARNING",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "PERFORMANCE_WARNING"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "633953f8-9233-4da1-8fe1-f76a9f258c55",
+                    "leftValue": "={{ $json.alert_type }}",
+                    "rightValue": "RECOVERY",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "RECOVERY"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        2240,
+        128
+      ],
+      "id": "e2a44aac-0ccb-4d2e-a01f-40eab169fbd5",
+      "name": "Route Alert Type"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "d644f8a7-04d7-4477-b767-6998d85f1452",
+              "name": "alert_title",
+              "value": "API Incident Detected",
+              "type": "string"
+            },
+            {
+              "id": "ebb0e0fe-458a-4417-9886-fe6cbeb890ee",
+              "name": "alert_severity",
+              "value": "critical",
+              "type": "string"
+            },
+            {
+              "id": "f5868b43-4f9d-415c-85f0-76dd0f85b392",
+              "name": "alert_message",
+              "value": "={{ `🔴 INCIDENT: ${$json.service_name}\nStatus: ${$json.status}\nHTTP Status: ${$json.http_status ?? \"N/A\"}\nResponse Time: ${$json.response_time_ms ?? \"N/A\"} ms\nAttempt: ${$json.attempt}/${$json.max_attempts}\nError Type: ${$json.error_type ?? \"N/A\"}\nError: ${$json.error_message ?? \"No details\"}\nChecked At: ${$json.checked_at}` }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        2464,
+        -80
+      ],
+      "id": "4d02f477-6aac-41ba-ae20-908514981a25",
+      "name": "Prepare Incident Alert"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "02aa0e9f-0110-41e0-88bd-0c08e981c89f",
+              "name": "alert_title",
+              "value": "API Performance Warning",
+              "type": "string"
+            },
+            {
+              "id": "2850c6af-9421-4bcf-93bc-735e0f1ddea2",
+              "name": "alert_severity",
+              "value": "warning",
+              "type": "string"
+            },
+            {
+              "id": "333f6c68-0858-4d04-b71b-9c19c6db3e29",
+              "name": "alert_message",
+              "value": "={{ `🟠 PERFORMANCE WARNING: ${$json.service_name}\nStatus: ${$json.status}\nHTTP Status: ${$json.http_status ?? \"N/A\"}\nResponse Time: ${$json.response_time_ms ?? \"N/A\"} ms\nThreshold: ${$json.degraded_threshold_ms} ms\nError: ${$json.error_message ?? \"Response is slower than expected\"}\nChecked At: ${$json.checked_at}` }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        2464,
+        144
+      ],
+      "id": "85a062e4-f1ce-4462-88dc-d23ad2bef5e1",
+      "name": "Prepare Performance Warning"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f5825d97-8a37-42ea-b106-3bdb312a0e04",
+              "name": "alert_title",
+              "value": "API Service Recovered",
+              "type": "string"
+            },
+            {
+              "id": "996615a3-2a83-46cc-80e4-d39328cb6dd9",
+              "name": "alert_severity",
+              "value": "resolved",
+              "type": "string"
+            },
+            {
+              "id": "5f933c16-67ea-4697-8797-97fd738a301b",
+              "name": "alert_message",
+              "value": "={{ `🟢 RECOVERY: ${$json.service_name}\nPrevious Status: ${$json.previous_status}\nCurrent Status: ${$json.status}\nHTTP Status: ${$json.http_status ?? \"N/A\"}\nResponse Time: ${$json.response_time_ms ?? \"N/A\"} ms\nChecked At: ${$json.checked_at}` }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        2464,
+        336
+      ],
+      "id": "a8a582de-5092-46ab-af22-73c74e8206df",
+      "name": "Prepare Recovery Alert"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.alert_webhook_url }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  title: $json.alert_title,\n  severity: $json.alert_severity,\n  message: $json.alert_message,\n  service_name: $json.service_name,\n  status: $json.status,\n  previous_status: $json.previous_status,\n  http_status: $json.http_status,\n  response_time_ms: $json.response_time_ms,\n  attempt: $json.attempt,\n  checked_at: $json.checked_at\n} }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 5000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2688,
+        -144
+      ],
+      "id": "3de76190-0862-4f39-a44f-8a4e798736ee",
+      "name": "Send Alert Webhook"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {
+          "clashHandling": {
+            "values": {
+              "resolveClash": "preferInput1"
+            }
+          },
+          "includeUnpaired": false
+        }
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        2912,
+        16
+      ],
+      "id": "9f22602f-b1b2-4c88-aa7e-867e34b29368",
+      "name": "Merge Alert Delivery Result"
+    },
+    {
+      "parameters": {
+        "amount": "={{ $json.retry_delay_ms / 1000 }}"
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1568,
+        -416
+      ],
+      "id": "5e04d0d9-cb0a-4f17-92c6-92d4a88502f4",
+      "name": "Wait Before Retry"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "e92d5e10-9d29-4cd7-8374-a987f40231dd",
+              "leftValue": "={{ Number($json.statusCode) >= 200 && Number($json.statusCode) < 300 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        3136,
+        16
+      ],
+      "id": "04e78674-0c75-46fc-9d69-b0bd4b7ade82",
+      "name": "Was Alert Delivered"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "4e3aa91f-b9d5-4536-9b5a-158772e78e25",
+              "name": "alert_delivery_status",
+              "value": "FAILED",
+              "type": "string"
+            },
+            {
+              "id": "8cc2fbca-cdd1-45e2-bff9-3adbbda7cb3d",
+              "name": "alert_delivery_error",
+              "value": "={{ $json.error?.message ?? $json.error?.description ?? $json.message ?? `Alert webhook returned HTTP ${$json.statusCode ?? \"unknown\"}` }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        3584,
+        144
+      ],
+      "id": "f69d6143-ddea-42a3-8cee-8caf7878f474",
+      "name": "Record Alert Delivery Failure"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "cf752dfd-f538-4e58-b9f5-3b439b876019",
+              "name": "alert_delivery_status",
+              "value": "SENT",
+              "type": "string"
+            },
+            {
+              "id": "037a1af8-cb2d-4186-81bb-d6e007a3e618",
+              "name": "alert_delivery_error",
+              "value": "={{ null }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        3360,
+        -144
+      ],
+      "id": "f6e81773-6348-4265-8865-39412dd6be43",
+      "name": "Record Alert Delivery Success"
+    },
+    {
+      "parameters": {
+        "jsCode": "const result = $input.first()?.json;\n\nif (!result) {\n  throw new Error(\"Final API check result is missing\");\n}\n\nconst allowedStatuses = [\n  \"UP\",\n  \"DEGRADED\",\n  \"DOWN\",\n  \"UNKNOWN\",\n];\n\nif (!allowedStatuses.includes(result.status)) {\n  throw new Error(`Cannot store unsupported status: ${result.status}`);\n}\n\nconst stateStore = $getWorkflowStaticData(\"global\");\n\nstateStore.last_status = result.status;\nstateStore.last_checked_at = result.checked_at;\n\nreturn [\n  {\n    json: {\n      ...result,\n      state_updated: true,\n    },\n  },\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3584,
+        -224
+      ],
+      "id": "eafd415e-e89d-4d78-8cdc-dc4603530b7e",
+      "name": "Store Current State"
+    },
+    {
+      "parameters": {
+        "jsCode": "const result = $input.first()?.json;\n\nif (!result) {\n  throw new Error(\"API monitoring result is missing\");\n}\n\nlet alertDeliveryStatus = result.alert_delivery_status;\n\nif (!alertDeliveryStatus) {\n  alertDeliveryStatus =\n    result.should_alert === false\n      ? \"NOT_REQUIRED\"\n      : \"UNKNOWN\";\n}\n\nreturn [\n  {\n    json: {\n      service_name: result.service_name ?? null,\n      url: result.url ?? null,\n      checked_at: result.checked_at ?? null,\n      logged_at: new Date().toISOString(),\n\n      status: result.status ?? \"UNKNOWN\",\n      http_status: result.http_status ?? null,\n      response_time_ms: result.response_time_ms ?? null,\n      attempt: Number(result.attempt ?? 1),\n\n      error_type: result.error_type ?? null,\n      error_message: result.error_message ?? null,\n\n      previous_status: result.previous_status ?? \"UNKNOWN\",\n      status_changed: Boolean(result.status_changed),\n\n      alert_type: result.alert_type ?? \"NONE\",\n      alert_delivery_status: alertDeliveryStatus,\n      alert_delivery_error:\n        result.alert_delivery_error ?? null,\n\n      state_updated: Boolean(result.state_updated),\n    },\n  },\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3808,
+        -128
+      ],
+      "id": "5eff0247-0121-40c6-9cbf-9e5efb33908e",
+      "name": "Prepare Check Log"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        -144
+      ],
+      "id": "beaa66f3-ef51-46ac-97ae-fc04289332c1",
+      "name": "Schedule API Check"
+    },
+    {
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "api_monitoring_logs"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {
+            "status_changed": false,
+            "state_updated": false
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "service_name",
+              "displayName": "service_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "url",
+              "displayName": "url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "checked_at",
+              "displayName": "checked_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "logged_at",
+              "displayName": "logged_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "http_status",
+              "displayName": "http_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "response_time_ms",
+              "displayName": "response_time_ms",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "attempt",
+              "displayName": "attempt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "error_type",
+              "displayName": "error_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "error_message",
+              "displayName": "error_message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "previous_status",
+              "displayName": "previous_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "status_changed",
+              "displayName": "status_changed",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "alert_type",
+              "displayName": "alert_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "alert_delivery_status",
+              "displayName": "alert_delivery_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "alert_delivery_error",
+              "displayName": "alert_delivery_error",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "state_updated",
+              "displayName": "state_updated",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        4032,
+        -128
+      ],
+      "id": "90b457a5-0c0c-4540-b882-fd0a1b7a574d",
+      "name": "Store Check Result"
+    }
+  ],
+  "connections": {
+    "Start Manual Test": {
+      "main": [
+        [
+          {
+            "node": "Load Monitor Configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Monitor Configuration": {
+      "main": [
+        [
+          {
+            "node": "Record Check Start",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Check Start": {
+      "main": [
+        [
+          {
+            "node": "Merge Check Context",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check API Health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check API Health": {
+      "main": [
+        [
+          {
+            "node": "Merge Check Context",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Check Context": {
+      "main": [
+        [
+          {
+            "node": "Evaluate API Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate API Status": {
+      "main": [
+        [
+          {
+            "node": "Should Retry Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Retry Check": {
+      "main": [
+        [
+          {
+            "node": "Wait Before Retry",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Load Previous State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Next Attempt": {
+      "main": [
+        [
+          {
+            "node": "Record Check Start",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Previous State": {
+      "main": [
+        [
+          {
+            "node": "Detect Status Change",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detect Status Change": {
+      "main": [
+        [
+          {
+            "node": "Should Send Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Send Alert": {
+      "main": [
+        [
+          {
+            "node": "Route Alert Type",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Store Current State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Alert Type": {
+      "main": [
+        [
+          {
+            "node": "Prepare Incident Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Performance Warning",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Recovery Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Incident Alert": {
+      "main": [
+        [
+          {
+            "node": "Send Alert Webhook",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge Alert Delivery Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Performance Warning": {
+      "main": [
+        [
+          {
+            "node": "Send Alert Webhook",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge Alert Delivery Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Recovery Alert": {
+      "main": [
+        [
+          {
+            "node": "Send Alert Webhook",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge Alert Delivery Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Alert Webhook": {
+      "main": [
+        [
+          {
+            "node": "Merge Alert Delivery Result",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Wait Before Retry": {
+      "main": [
+        [
+          {
+            "node": "Prepare Next Attempt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Alert Delivery Result": {
+      "main": [
+        [
+          {
+            "node": "Was Alert Delivered",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Was Alert Delivered": {
+      "main": [
+        [
+          {
+            "node": "Record Alert Delivery Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record Alert Delivery Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Alert Delivery Success": {
+      "main": [
+        [
+          {
+            "node": "Store Current State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Alert Delivery Failure": {
+      "main": [
+        [
+          {
+            "node": "Prepare Check Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Current State": {
+      "main": [
+        [
+          {
+            "node": "Prepare Check Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Check Log": {
+      "main": [
+        [
+          {
+            "node": "Store Check Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule API Check": {
+      "main": [
+        [
+          {
+            "node": "Load Monitor Configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "tags": []
+}
