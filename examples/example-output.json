@@ -1,0 +1,19 @@
+{
+  "service_name": "JSONPlaceholder API",
+  "url": "https://jsonplaceholder.typicode.com/posts/1",
+  "checked_at": "2026-08-25T07:08:32.036Z",
+  "logged_at": "2026-08-25T07:08:32.557Z",
+  "status": "UP",
+  "http_status": 200,
+  "response_time_ms": 117,
+  "attempt": 1,
+  "error_type": null,
+  "error_message": null,
+  "previous_status": "DOWN",
+  "status_changed": true,
+  "alert_type": "RECOVERY",
+  "alert_delivery_status": "SENT",
+  "alert_delivery_error": null,
+  "state_updated": true
+}
+
